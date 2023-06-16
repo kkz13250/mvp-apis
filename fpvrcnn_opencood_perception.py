@@ -36,30 +36,27 @@ from mvp.evaluate.detection import iou3d_batch
 from mvp.data.util import pcd_sensor_to_map, pcd_map_to_sensor
 
 
-class CobevtOpencoodPerception(Perception):
-    def __init__(self, fusion_method="intermediate", model_name="pointpillar", dynamic=True):
+class FpvrcnnOpencoodPerception(Perception):
+    def __init__(self, fusion_method="intermediate", model_name="fpvrcnn"):
         super().__init__()
-        assert(model_name in ["pointpillar"])
-        assert(fusion_method in ["intermediate"])
+        assert(model_name in ["fpvrcnn"])
+        assert(fusion_method in ["early", "intermediate", "late"])
         self.name = "{}_{}".format(model_name, fusion_method)
         self.devices = "cuda:0"
         self.model_name = model_name
         self.fusion_method = fusion_method
         self.root = os.path.join(third_party_root, "OpenCOOD")
-        if dynmaic:
-            self.model_dir = os.path.join(self.root, "Models/cobevt")
-        else:
-            self.model_dir = os.path.join(self.root, "Models/cobevt_static")
+        self.model_dir = os.path.join(self.root, "Models/fpvrcnn")
         self.config_file = os.path.join(self.model_dir, "config.yaml")
         self.preprocessors = {
-            #"early": self.early_preprocess,
+            "early": self.early_preprocess,
             "intermediate": self.intermediate_preprocess,
-            #"late": self.late_preprocess,
+            "late": self.late_preprocess,
         }
         self.inference_processors = {
-            #"early": inference_utils.inference_early_fusion,
+            "early": inference_utils.inference_early_fusion,
             "intermediate": inference_utils.inference_intermediate_fusion,
-            #"late": inference_utils.inference_late_fusion,
+            "late": inference_utils.inference_late_fusion,
         }
 
         hypes = yaml_utils.load_yaml(self.config_file, None)
@@ -236,11 +233,6 @@ class CobevtOpencoodPerception(Perception):
         object_stack = []
         object_id_stack = []
 
-        velocity = []
-        time_delay = []
-        infra = []
-        spatial_correction_matrix = []
-
         # loop over all CAVs to process information
         for cav_id, selected_cav_base in base_data_dict.items():
             # check if the cav is within the communication range with ego
@@ -261,12 +253,6 @@ class CobevtOpencoodPerception(Perception):
             object_id_stack += selected_cav_processed['object_ids']
             processed_features.append(
                 selected_cav_processed['processed_features'])
-
-            velocity.append(selected_cav_processed['velocity'])
-            time_delay.append(float(selected_cav_base['time_delay']))
-            spatial_correction_matrix.append(
-                selected_cav_base['params']['spatial_correction_matrix'])
-            infra.append(1 if int(cav_id) < 0 else 0)
 
         # exclude all repetitive objects
         unique_indices = \
@@ -295,15 +281,6 @@ class CobevtOpencoodPerception(Perception):
                 anchors=anchor_box,
                 mask=mask)
         
-        velocity = velocity + (self.dataset.max_cav - len(velocity)) * [0.]
-        time_delay = time_delay + (self.dataset.max_cav - len(time_delay)) * [0.]
-        infra = infra + (self.dataset.max_cav - len(infra)) * [0.]
-        spatial_correction_matrix = np.stack(spatial_correction_matrix)
-        padding_eye = np.tile(np.eye(4)[None],(self.dataset.max_cav - len(
-                                               spatial_correction_matrix),1,1))
-        spatial_correction_matrix = np.concatenate([spatial_correction_matrix,
-                                                   padding_eye], axis=0)
-
         processed_data_dict['ego'].update(
             {'object_bbx_center': object_bbx_center,
              'object_bbx_mask': mask,
@@ -312,10 +289,6 @@ class CobevtOpencoodPerception(Perception):
              'processed_lidar': merged_feature_dict,
              'label_dict': label_dict,
              'cav_num': cav_num,
-             'velocity': velocity,
-             'time_delay': time_delay,
-             'infra': infra,
-             'spatial_correction_matrix': spatial_correction_matrix,
              'pairwise_t_matrix': pairwise_t_matrix})
 
         return processed_data_dict

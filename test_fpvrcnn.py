@@ -7,7 +7,7 @@ import numpy as np
 
 from mvp.config import data_root
 from mvp.data.opv2v_dataset import OPV2VDataset
-from mvp.perception.cobevt_opencood_perception import CobevtOpencoodPerception
+from mvp.perception.fpvrcnn_opencood_perception import FpvrcnnOpencoodPerception
 from mvp.evaluate.detection import evaluate_single_vehicle
 from mvp.visualize.general import draw_matplotlib
 
@@ -17,14 +17,10 @@ def test_sample():
     case = dataset.get_case(1, tag="multi_vehicle")
     ego_id = min(list(case.keys()))
 
-    perception = CobevtOpencoodPerception(fusion_method="intermediate", model_name="pointpillar", dynamic=True)
+    perception = FpvrcnnOpencoodPerception(fusion_method="intermediate", model_name="fpvrcnn")
     result = perception.run(case, ego_id=ego_id)
-    draw_matplotlib(result[ego_id]["lidar"], result[ego_id]["gt_bboxes"], result[ego_id]["pred_bboxes"], show=False, save="../tmp/dynamic.png")
-    """
-    perception = CobevtOpencoodPerception(fusion_method="intermediate", model_name="pointpillar", dynamic=False)
-    result = perception.run(case, ego_id=ego_id)
-    draw_matplotlib(result[ego_id]["lidar"], result[ego_id]["gt_bboxes"], result[ego_id]["pred_bboxes"], show=False, save="../tmp/static.png")
-    """
+    draw_matplotlib(result[ego_id]["lidar"], result[ego_id]["gt_bboxes"], result[ego_id]["pred_bboxes"], show=False, save="../tmp/fpvrcnn.png")
+
     
 
 
