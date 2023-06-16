@@ -32,12 +32,11 @@ from .perception import Perception
 from mvp.config import third_party_root, data_root
 from mvp.tools.iou import iou3d
 from mvp.evaluate.detection import iou3d_batch
-from .iou_util import oriented_box_intersection_2d
 from mvp.data.util import pcd_sensor_to_map, pcd_map_to_sensor
 
 
 class CustomOpencoodPerception(Perception):
-    def __init__(self, fusion_method="early", model_name="pointpillar", dataset_name="opv2v"):
+    def __init__(self, fusion_method="early", model_name="pointpillar", mcity=False):
         super().__init__()
         assert(model_name in ["pixor", "voxelnet", "second", "pointpillar", "emp", "v2vnet"])
         assert(fusion_method in ["early", "intermediate", "late"])
@@ -52,7 +51,7 @@ class CustomOpencoodPerception(Perception):
             self.model_dir = os.path.join(self.root, "Models/v2vnet")
             self.fusion_method = "intermediate"
         else:
-            self.model_dir = os.path.join(self.root, "Models/{}_{}_fusion".format(self.model_name, self.fusion_method))
+            self.model_dir = os.path.join(self.root, "Models/{}_{}_fusion{}".format(self.model_name, self.fusion_method if self.fusion_method != "intermediate" else "attentive", "_mcity" if mcity else ""))
         self.config_file = os.path.join(self.model_dir, "config.yaml")
         self.preprocessors = {
             "early": self.early_preprocess,
@@ -66,22 +65,9 @@ class CustomOpencoodPerception(Perception):
         }
 
         hypes = yaml_utils.load_yaml(self.config_file, None)
-        hypes["root_dir"] = os.path.join(data_root, "{}/train".format(self.dataset_name.upper()))
-        hypes["validate_dir"] = os.path.join(data_root, "{}/validate".format(self.dataset_name.upper()))
+        hypes["root_dir"] = os.path.join(data_root, "OPV2V/train")
+        hypes["validate_dir"] = os.path.join(data_root, "OPV2V/validate")
         self.dataset = build_dataset(hypes, visualize=False, train=False)
-        
-        """
-        Test dataloader output
-        data_loader = DataLoader(self.dataset,
-                             batch_size=1,
-                             num_workers=10,
-                             collate_fn=self.dataset.collate_batch,
-                             shuffle=False,
-                             pin_memory=False,
-                             drop_last=False)
-        for i, batch_data in enumerate(data_loader):
-            print(i, batch_data)
-        """
         self.model = train_utils.create_model(hypes)
         # we assume gpu is necessary
         if torch.cuda.is_available():
@@ -94,10 +80,8 @@ class CustomOpencoodPerception(Perception):
         if self.model_name == "emp":
             from .emp_utils import EMP_pcd_partition
             multi_vehicle_case = EMP_pcd_partition(multi_vehicle_case, ego_id)
-
         batch = self.preprocessors[self.fusion_method](multi_vehicle_case, ego_id)
         batch_data = self.dataset.collate_batch_test([batch])
-
         with torch.no_grad():
             batch_data = train_utils.to_device(batch_data, self.device)
             pred_box_tensor, pred_score, gt_box_tensor = \
@@ -110,16 +94,6 @@ class CustomOpencoodPerception(Perception):
         pred_scores = pred_score.cpu().numpy()
         return pred_bboxes, pred_scores
     
-    def get_frame_data(self, scenario_id, frame_id):
-        res = {}
-        if scenario_id not in self.dataset.scenario_database:
-            return res
-        for cav_id in self.dataset.scenario_database[scenario_id]:
-            if frame_id in self.dataset.scenario_database[scenario_id][cav_id]:
-                res[cav_id][frame_id] = self.dataset.scenario_database[scenario_id][cav_id][frame_id]
-        return res
-
-
     def run_multi_vehicle(self, multi_vehicle_case, ego_id):
         pred_bboxes, pred_scores = self.run(multi_vehicle_case, ego_id)
         if pred_bboxes.shape[0] == 0:
@@ -991,32 +965,3 @@ class CustomOpencoodPerception(Perception):
         voxel_size = self.dataset.pre_processor.params["args"]["voxel_size"]
         voxel_index = (np.floor(point[:3] - lidar_range[:3]) / voxel_size).astype(int)
         return voxel_index
-
-    def iou_torch(self, bboxes_a, bboxes_b):
-        corners2d_a = torch.unsqueeze(box_utils.boxes_to_corners2d(bboxes_a, order="lwh")[:,:,:2], 0)
-        corners2d_b = torch.unsqueeze(box_utils.boxes_to_corners2d(bboxes_b, order="lwh")[:,:,:2], 0)
-        area_a = bboxes_a[:, 3] * bboxes_a[:, 4]
-        area_b = bboxes_b[:, 3] * bboxes_b[:, 4]
-        area_inter, _ = oriented_box_intersection_2d(corners2d_a, corners2d_b)
-        area_inter = area_inter.squeeze()
-        height_inter = torch.clip(
-            torch.min(bboxes_a[:, 2] + 0.5 * bboxes_a[:, 5], bboxes_b[:, 2] + 0.5 * bboxes_b[:, 5]) - \
-            torch.max(bboxes_a[:, 2] - 0.5 * bboxes_a[:, 5], bboxes_b[:, 2] - 0.5 * bboxes_b[:, 5]),
-            min=0, max=5)
-        iou = area_inter * height_inter / (area_a * bboxes_a[:, 5] + area_b * bboxes_b[:, 5] - area_inter * height_inter)
-        return iou
-
-    def detach_all(self, x):
-        if isinstance(x, dict):
-            y = {}
-            for key, value in x.items():
-                y[key] = self.detach_all(value)
-        elif isinstance(x, list):
-            y = []
-            for value in x:
-                y.append(self.detach_all(value))
-        elif isinstance(x, torch.Tensor):
-            y = x.detach()
-        else:
-            y = x
-        return y
